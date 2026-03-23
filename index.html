@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MIS — Meeting Intelligence System</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#05070d;--bg1:#090c15;--bg2:#0d1120;
+  --line:#151b2e;--line2:#1e2640;
+  --cyan:#00d4ff;--cyan-dim:rgba(0,212,255,0.1);--cyan-glow:rgba(0,212,255,0.05);
+  --violet:#7c5cfc;--violet-dim:rgba(124,92,252,0.1);
+  --amber:#ffb830;--amber-dim:rgba(255,184,48,0.09);
+  --red:#ff4757;--red-dim:rgba(255,71,87,0.09);
+  --green:#00e676;--green-dim:rgba(0,230,118,0.07);
+  --pink:#ff79c6;
+  --text:#c8d6ef;--text2:#6b7fa3;--text3:#2e3d5a;
+  --mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif;
+}
+html,body{height:100%;overflow:hidden;user-select:none}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.025) 3px,rgba(0,0,0,0.025) 4px)}
+.topbar{flex-shrink:0;height:46px;background:var(--bg1);border-bottom:1px solid var(--line2);display:flex;align-items:center;padding:0 18px;gap:14px}
+.logo-wrap{display:flex;align-items:center;gap:10px}
+.logo-box{width:26px;height:26px;border:1px solid var(--cyan);border-radius:5px;display:flex;align-items:center;justify-content:center}
+.logo-dot{width:9px;height:9px;background:var(--cyan);border-radius:2px;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.8)}}
+.logo-name{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:0.5px}
+.logo-name em{color:var(--cyan);font-style:normal}
+.vsep{width:1px;height:18px;background:var(--line2)}
+.chip{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;padding:3px 7px;border-radius:3px;text-transform:uppercase}
+.cc{color:var(--cyan);background:var(--cyan-dim);border:1px solid rgba(0,212,255,0.18)}
+.cv{color:#a78bfa;background:var(--violet-dim);border:1px solid rgba(124,92,252,0.18)}
+.cg{color:var(--green);background:var(--green-dim);border:1px solid rgba(0,230,118,0.18)}
+.ca{color:var(--amber);background:var(--amber-dim);border:1px solid rgba(255,184,48,0.18)}
+.cr{color:var(--red);background:var(--red-dim);border:1px solid rgba(255,71,87,0.18)}
+.ml{margin-left:auto}
+.orb{width:7px;height:7px;border-radius:50%;background:var(--text3);transition:all .3s}
+.orb.active{background:var(--green);box-shadow:0 0 7px var(--green)}
+.orb.running{background:var(--amber);box-shadow:0 0 7px var(--amber);animation:blink .8s step-end infinite}
+.orb.approval{background:var(--violet);box-shadow:0 0 7px var(--violet);animation:blink .8s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+#stText{font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:.5px}
+.tabs{flex-shrink:0;display:flex;background:var(--bg1);border-bottom:1px solid var(--line2);padding:0 18px}
+.tab{font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;padding:10px 16px;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:var(--text2)}
+.tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+.view{display:none;flex:1;overflow:hidden;flex-direction:column}
+.view.active{display:flex}
+.ws{flex:1;display:flex;overflow:hidden;min-height:0}
+.sb{width:320px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--line2);display:flex;flex-direction:column;overflow:hidden}
+.sb-sec{border-bottom:1px solid var(--line);padding:14px;flex-shrink:0}
+.sb-sec.grow{flex:1;overflow-y:auto;border-bottom:none}
+.slabel{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.slabel::before{content:'//';color:var(--cyan);opacity:.4}
+.input-tabs{display:flex;margin-bottom:10px;border:1px solid var(--line2);border-radius:4px;overflow:hidden}
+.itab{flex:1;font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:6px;text-align:center;cursor:pointer;color:var(--text3);background:transparent;border:none;transition:all .2s}
+.itab.active{color:var(--cyan);background:var(--cyan-dim)}
+textarea{width:100%;height:170px;background:var(--bg);border:1px solid var(--line2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:11px;line-height:1.7;padding:10px;resize:none;outline:none;transition:border-color .2s;user-select:text}
+textarea:focus{border-color:rgba(0,212,255,.35)}
+textarea::placeholder{color:var(--text3)}
+.upload-zone{width:100%;height:170px;background:var(--bg);border:1px dashed var(--line2);border-radius:4px;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:all .2s;display:none}
+.upload-zone:hover{border-color:var(--cyan);background:var(--cyan-glow)}
+.upload-zone.active{display:flex}
+.uz-icon{font-size:24px;color:var(--text3)}
+.uz-label{font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;letter-spacing:1px}
+.uz-sub{font-family:var(--mono);font-size:9px;color:var(--text3);opacity:.5}
+.upload-status{font-family:var(--mono);font-size:10px;color:var(--cyan);margin-top:6px;min-height:16px}
+.rbtn{width:100%;margin-top:9px;padding:10px;background:transparent;border:1px solid var(--cyan);border-radius:4px;color:var(--cyan);font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:2px;cursor:pointer;text-transform:uppercase;transition:all .2s}
+.rbtn:hover:not(:disabled){background:var(--cyan-dim)}
+.rbtn:disabled{border-color:var(--line2);color:var(--text3);cursor:not-allowed}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.met{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:9px 11px}
+.met-val{font-family:var(--mono);font-size:20px;font-weight:500;color:var(--cyan);line-height:1}
+.met-val.w{color:var(--amber)}
+.met-lbl{font-size:10px;color:var(--text3);margin-top:3px}
+.ditem{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px}
+.ditem:last-child{border-bottom:none}
+.ddot{width:5px;height:5px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dname{color:var(--text);flex:1}
+.did{color:var(--text3);font-size:9px}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.logstrip{background:var(--bg);border-bottom:1px solid var(--line2);overflow-y:auto;padding:10px 18px;flex-shrink:0}
+.logrow{display:grid;grid-template-columns:76px 120px 1fr;font-family:var(--mono);font-size:10.5px;line-height:2;border-bottom:1px solid rgba(21,27,46,.5)}
+.logrow:last-child{border-bottom:none}
+.lts{color:var(--text3)}
+.lag.ex{color:var(--cyan)}.lag.aw{color:var(--violet)}.lag.tk{color:var(--amber)}
+.lag.au{color:var(--green)}.lag.gm{color:var(--pink)}.lag.ca{color:#5af}.lag.wh{color:#c8ff80}.lag.sl{color:#4af}
+.lmsg{color:var(--text2);user-select:text}
+.lmsg.ok{color:var(--green)}.lmsg.wn{color:var(--amber)}.lmsg.er{color:var(--red)}
+.drag-handle{flex-shrink:0;height:5px;background:var(--line2);cursor:row-resize;display:flex;align-items:center;justify-content:center;transition:background .15s}
+.drag-handle:hover{background:var(--cyan)}
+.drag-handle::before{content:'';width:32px;height:2px;border-radius:1px;background:rgba(255,255,255,0.15)}
+.drag-handle:hover::before{background:var(--bg)}
+.pgrid{flex:1;display:flex;overflow:hidden;min-height:0}
+.pane{flex:1;border-right:1px solid var(--line2);display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.pane:last-child{border-right:none}
+.ph{flex-shrink:0;padding:9px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;background:var(--bg1)}
+.picon{width:16px;height:16px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;flex-shrink:0}
+.ptitle{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:1px;text-transform:uppercase;color:var(--text2)}
+.pbody{flex:1;overflow-y:auto;padding:11px 14px;user-select:text}
+.titem{padding:7px 0;border-bottom:1px solid var(--line)}
+.titem:last-child{border-bottom:none}
+.town{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;color:var(--cyan);text-transform:uppercase;margin-bottom:2px;display:flex;align-items:center;gap:6px}
+.conf-bar{height:3px;border-radius:2px;margin-top:3px;transition:width .3s}
+.conf-high{background:var(--green)}
+.conf-mid{background:var(--amber)}
+.conf-low{background:var(--red)}
+.conf-label{font-family:var(--mono);font-size:9px;margin-top:2px}
+.ttext{font-size:12px;color:var(--text);line-height:1.4}
+.tdl{font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px}
+.dtag{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:3px;display:inline-block;margin:2px 2px 2px 0;line-height:1.5}
+.dtag-d{color:var(--green);background:var(--green-dim);border:1px solid rgba(0,230,118,.15)}
+.dtag-u{color:var(--red);background:var(--red-dim);border:1px solid rgba(255,71,87,.15)}
+.dtag-r{color:var(--amber);background:var(--amber-dim);border:1px solid rgba(255,184,48,.15)}
+.escitem{padding:8px 10px;border-radius:3px;margin-bottom:5px;border-left:2px solid}
+.esc-ov{background:var(--red-dim);border-color:var(--red)}
+.esc-at{background:var(--amber-dim);border-color:var(--amber)}
+.esc-ok{background:var(--green-dim);border-color:var(--green)}
+.escst{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;font-weight:500;text-transform:uppercase;margin-bottom:2px}
+.esc-ov .escst{color:var(--red)}.esc-at .escst{color:var(--amber)}.esc-ok .escst{color:var(--green)}
+.esctx{font-size:11px;color:var(--text);line-height:1.4}
+.escow{font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px}
+.calitem{padding:6px 0;border-bottom:1px solid var(--line)}
+.calitem:last-child{border-bottom:none}
+.cal-title{font-size:11px;color:var(--text)}
+.cal-meta{font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:2px}
+.ritem{padding:7px 10px;border-radius:3px;margin-bottom:5px;border-left:2px solid var(--amber);background:var(--amber-dim)}
+.ritem.clean{border-color:var(--green);background:var(--green-dim)}
+.rst{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;color:var(--amber);text-transform:uppercase;margin-bottom:2px}
+.ritem.clean .rst{color:var(--green)}
+.rtx{font-size:11px;color:var(--text)}
+.rown{font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:2px}
+
+/* ── APPROVAL OVERLAY ── */
+.approval-overlay{
+  position:fixed;inset:0;background:rgba(5,7,13,0.92);
+  z-index:1000;display:none;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);
+}
+.approval-overlay.active{display:flex}
+.approval-modal{
+  background:var(--bg1);border:1px solid var(--violet);border-radius:8px;
+  width:820px;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;
+}
+.approval-header{
+  padding:16px 20px;border-bottom:1px solid var(--line2);
+  display:flex;align-items:center;gap:12px;flex-shrink:0;
+}
+.approval-title{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text);letter-spacing:1px}
+.approval-sub{font-family:var(--mono);font-size:10px;color:var(--text3)}
+.approval-body{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:8px}
+.email-card{
+  background:var(--bg);border:1px solid var(--line2);border-radius:6px;
+  overflow:hidden;transition:border-color .2s;
+}
+.email-card.approved{border-color:rgba(0,230,118,.4)}
+.email-card.rejected{border-color:rgba(255,71,87,.3);opacity:0.5}
+.email-card-head{
+  padding:10px 14px;background:var(--bg1);
+  display:flex;align-items:center;gap:10px;cursor:pointer;
+}
+.email-to-label{font-family:var(--mono);font-size:10px;color:#a78bfa;flex:1}
+.email-expand-icon{font-family:var(--mono);font-size:10px;color:var(--text3);transition:transform .2s;flex-shrink:0}
+.email-card.expanded .email-expand-icon{transform:rotate(180deg)}
+.email-actions{display:flex;gap:6px}
+.eabtn{font-family:var(--mono);font-size:9px;letter-spacing:1px;padding:4px 10px;border-radius:3px;border:1px solid;cursor:pointer;background:transparent;transition:all .2s;text-transform:uppercase}
+.eabtn-approve{color:var(--green);border-color:rgba(0,230,118,.3)}
+.eabtn-approve:hover,.eabtn-approve.sel{background:var(--green-dim)}
+.eabtn-edit{color:var(--cyan);border-color:rgba(0,212,255,.3)}
+.eabtn-edit:hover{background:var(--cyan-dim)}
+.eabtn-reject{color:var(--red);border-color:rgba(255,71,87,.3)}
+.eabtn-reject:hover,.eabtn-reject.sel{background:var(--red-dim)}
+.email-body-area{padding:12px 14px;display:none;border-top:1px solid var(--line)}
+.email-card.expanded .email-body-area{display:block}
+.email-body-text{font-size:11px;color:var(--text2);line-height:1.7;white-space:pre-wrap;user-select:text;max-height:200px;overflow-y:auto}
+.email-body-edit{width:100%;min-height:120px;background:var(--bg);border:1px solid var(--line2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:11px;line-height:1.7;padding:10px;resize:vertical;outline:none;display:none;user-select:text}
+.email-body-edit:focus{border-color:rgba(0,212,255,.35)}
+.approval-footer{
+  padding:14px 20px;border-top:1px solid var(--line2);
+  display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg1);
+}
+.approve-all-btn{
+  padding:10px 20px;background:var(--green-dim);border:1px solid rgba(0,230,118,.3);
+  color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:1.5px;
+  border-radius:4px;cursor:pointer;transition:all .2s;text-transform:uppercase;
+}
+.approve-all-btn:hover{background:rgba(0,230,118,.2)}
+.submit-approval-btn{
+  padding:10px 24px;background:var(--cyan);border:none;
+  color:var(--bg);font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:1.5px;
+  border-radius:4px;cursor:pointer;transition:all .2s;text-transform:uppercase;margin-left:auto;
+}
+.submit-approval-btn:hover{opacity:.9}
+.approval-count{font-family:var(--mono);font-size:10px;color:var(--text3)}
+
+/* BOARD */
+.board-view{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.board-header{padding:16px 20px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:12px;background:var(--bg1);flex-shrink:0}
+.board-cols{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--line2);overflow:hidden}
+.board-col{background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
+.col-head{padding:12px 16px;border-bottom:1px solid var(--line);background:var(--bg1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.col-title{font-family:var(--mono);font-size:9px;letter-spacing:2px;text-transform:uppercase}
+.col-count{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.col-body{flex:1;overflow-y:auto;padding:10px}
+.board-card{background:var(--bg1);border:1px solid var(--line2);border-radius:4px;padding:10px 12px;margin-bottom:8px;transition:border-color .2s}
+.board-card:hover{border-color:var(--cyan)}
+.bc-owner{font-family:var(--mono);font-size:9px;color:var(--cyan);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.bc-task{font-size:12px;color:var(--text);line-height:1.4;margin-bottom:4px}
+.bc-meta{font-family:var(--mono);font-size:9px;color:var(--text3)}
+.bc-conf{font-family:var(--mono);font-size:9px;margin-top:3px}
+.bc-meeting{font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;opacity:.6}
+.status-btn{font-family:var(--mono);font-size:8px;letter-spacing:1px;padding:2px 6px;border-radius:2px;border:none;cursor:pointer;margin-top:5px}
+.sbtn-done{background:var(--green-dim);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+.sbtn-open{background:var(--cyan-dim);color:var(--cyan);border:1px solid rgba(0,212,255,.2)}
+.audit-btn{position:fixed;bottom:14px;right:14px;z-index:100;background:var(--bg1);border:1px solid var(--line2);border-radius:4px;padding:7px 13px;font-family:var(--mono);font-size:10px;color:var(--text2);cursor:pointer;transition:all .2s;letter-spacing:1px}
+.audit-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.audit-drawer{position:fixed;bottom:0;left:0;right:0;height:0;background:var(--bg1);border-top:1px solid var(--line2);overflow:hidden;transition:height .25s ease;z-index:99}
+.audit-drawer.open{height:260px}
+.audit-inner{padding:14px 18px;height:100%;overflow-y:auto}
+.arow{display:grid;grid-template-columns:90px 100px 140px 1fr;font-family:var(--mono);font-size:10px;line-height:2;border-bottom:1px solid var(--line);color:var(--text3)}
+.arow:last-child{border-bottom:none}
+.arow .aag{color:#a78bfa}
+.arow .aac{color:var(--text2)}
+.arow.warning .aac{color:var(--amber)}
+.arow.error .aac{color:var(--red)}
+.empty{font-family:var(--mono);font-size:10px;color:var(--text3);padding:6px 0}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:var(--line2)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:10px;height:10px;border:1.5px solid rgba(0,212,255,.3);border-top-color:var(--cyan);border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo-wrap">
+    <div class="logo-box"><div class="logo-dot"></div></div>
+    <div class="logo-name">MIS<em>::</em>Intelligence</div>
+  </div>
+  <div class="vsep"></div>
+  <div class="chip cc">PS-02</div>
+  <div class="chip cv">LangGraph</div>
+  <div class="chip cv">5 Agents</div>
+  <div class="chip cv">Groq LLM</div>
+  <div class="ml" style="display:flex;align-items:center;gap:10px;">
+    <div class="orb" id="stOrb"></div>
+    <span id="stText">IDLE</span>
+    <div class="vsep"></div>
+    <div class="chip cg" id="healthChip">HEALTHY</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('pipeline')">Pipeline</div>
+  <div class="tab" onclick="switchTab('board')">Task Board</div>
+</div>
+
+<!-- PIPELINE VIEW -->
+<div class="view active" id="view-pipeline">
+  <div class="ws">
+    <div class="sb">
+      <div class="sb-sec">
+        <div class="slabel">01 input</div>
+        <div class="input-tabs">
+          <button class="itab active" onclick="setInputMode('text')">Text</button>
+          <button class="itab" onclick="setInputMode('audio')">Audio</button>
+          <button class="itab" onclick="setInputMode('pdf')">PDF</button>
+        </div>
+        <textarea id="transcript" placeholder="Paste meeting transcript...">Meeting: Q2 Product Planning - March 18, 2026
+Attendees: Priya (PM), Arjun (Engineering Lead), Sara (Design)
+
+Priya: Let's finalize the launch plan for the dashboard feature.
+Arjun: Engineering is ready, just need final designs from Sara.
+Sara: I'll have the mockups done by March 22nd.
+Priya: Arjun, can you set up the staging environment by March 25th?
+Arjun: Yes, works for me.
+Priya: I'll send the launch announcement to stakeholders by March 28th.
+Sara: Should we do a design review before that?
+Priya: Yes - design review March 23rd. Launch April 1st.
+Arjun: Who handles release notes?
+Priya: Still unresolved, figure out async.</textarea>
+        <div class="upload-zone" id="audioZone" onclick="document.getElementById('audioInput').click()">
+          <input type="file" id="audioInput" accept=".mp3,.wav,.m4a,.ogg" style="display:none" onchange="handleAudioUpload(this)">
+          <div class="uz-icon">🎙</div>
+          <div class="uz-label">Click to upload audio file</div>
+          <div class="uz-sub">MP3 · WAV · M4A · OGG</div>
+        </div>
+        <div class="upload-zone" id="pdfZone" onclick="document.getElementById('pdfInput').click()">
+          <input type="file" id="pdfInput" accept=".pdf" style="display:none" onchange="handlePdfUpload(this)">
+          <div class="uz-icon">📄</div>
+          <div class="uz-label">Click to upload PDF</div>
+          <div class="uz-sub">Meeting notes · Reports · Documents</div>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+        <button class="rbtn" id="runBtn" onclick="runPipeline()">▶ Execute Pipeline</button>
+      </div>
+      <div class="sb-sec">
+        <div class="slabel">02 metrics</div>
+        <div class="metrics">
+          <div class="met"><div class="met-val" id="mT">—</div><div class="met-lbl">Tasks</div></div>
+          <div class="met"><div class="met-val" id="mD">—</div><div class="met-lbl">Decisions</div></div>
+          <div class="met"><div class="met-val" id="mE">—</div><div class="met-lbl">Approved</div></div>
+          <div class="met"><div class="met-val w" id="mEs">—</div><div class="met-lbl">Escalations</div></div>
+          <div class="met"><div class="met-val" id="mC" style="color:#5af">—</div><div class="met-lbl">Cal Events</div></div>
+          <div class="met"><div class="met-val" id="mR" style="color:var(--amber)">—</div><div class="met-lbl">Recurring</div></div>
+        </div>
+      </div>
+      <div class="sb-sec grow">
+        <div class="slabel">03 gmail drafts</div>
+        <div id="draftsBox"><div class="empty">No drafts yet.</div></div>
+      </div>
+    </div>
+
+    <div class="main" id="mainPanel">
+      <div class="logstrip" id="logBox" style="height:150px">
+        <div class="logrow"><span class="lts">--:--:--</span><span class="lag">SYSTEM</span><span class="lmsg">Ready — LangGraph orchestration active. Paste transcript and execute.</span></div>
+      </div>
+      <div class="drag-handle" id="dragHandle"></div>
+      <div class="pgrid" id="pgrid">
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:var(--cyan-dim);color:var(--cyan);">T</div><div class="ptitle">Tasks & Decisions</div></div>
+          <div class="pbody">
+            <div id="tasksBox"><div class="empty">Awaiting extraction...</div></div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+              <div class="slabel" style="margin-bottom:5px">decisions</div>
+              <div id="decisionsBox"><div class="empty">—</div></div>
+            </div>
+            <div style="margin-top:8px">
+              <div class="slabel" style="margin-bottom:5px">unresolved</div>
+              <div id="unresolvedBox"><div class="empty">—</div></div>
+            </div>
+            <div style="margin-top:8px">
+              <div class="slabel" style="margin-bottom:5px">recurring issues</div>
+              <div id="recurringBox"><div class="empty">—</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:var(--violet-dim);color:#a78bfa;">A</div><div class="ptitle">Approval Gate</div><div id="approvalBadge" style="margin-left:auto"></div></div>
+          <div class="pbody" id="approvalPane"><div class="empty">Emails will appear here for approval...</div></div>
+        </div>
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:var(--amber-dim);color:var(--amber);">!</div><div class="ptitle">Escalations</div></div>
+          <div class="pbody" id="escalationsBox"><div class="empty">TaskTracker scanning...</div></div>
+        </div>
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:rgba(85,170,255,0.1);color:#5af;">C</div><div class="ptitle">Calendar</div></div>
+          <div class="pbody" id="calendarBox"><div class="empty">Awaiting calendar agent...</div></div>
+        </div>
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:var(--green-dim);color:var(--green);">R</div><div class="ptitle">Recovery</div></div>
+          <div class="pbody" id="recoveryBox"><div class="empty">No recovery events.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TASK BOARD VIEW -->
+<div class="view" id="view-board">
+  <div class="board-view">
+    <div class="board-header">
+      <div class="slabel" style="margin:0">Task Board</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-left:8px">Escalations sync overdue status in real time</div>
+      <div class="chip cc" style="margin-left:auto">Live SQLite</div>
+      <button class="rbtn" style="width:auto;padding:6px 16px;margin:0" onclick="loadTaskBoard()">Refresh</button>
+      <button class="rbtn" style="width:auto;padding:6px 16px;margin:0;border-color:var(--red);color:var(--red)" onclick="clearTasks()">Clear All</button>
+    </div>
+    <div class="board-cols">
+      <div class="board-col">
+        <div class="col-head"><div class="col-title" style="color:var(--cyan)">Open</div><div class="col-count" id="countOpen">0</div></div>
+        <div class="col-body" id="colOpen"><div class="empty" style="padding:12px">No open tasks.</div></div>
+      </div>
+      <div class="board-col">
+        <div class="col-head"><div class="col-title" style="color:var(--red)">Overdue</div><div class="col-count" id="countOverdue">0</div></div>
+        <div class="col-body" id="colOverdue"><div class="empty" style="padding:12px">No overdue tasks.</div></div>
+      </div>
+      <div class="board-col">
+        <div class="col-head"><div class="col-title" style="color:var(--green)">Done</div><div class="col-count" id="countDone">0</div></div>
+        <div class="col-body" id="colDone"><div class="empty" style="padding:12px">No completed tasks.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- APPROVAL OVERLAY -->
+<div class="approval-overlay" id="approvalOverlay">
+  <div class="approval-modal">
+    <div class="approval-header">
+      <div>
+        <div class="approval-title">⏸ Human-in-the-Loop Approval Gate</div>
+        <div class="approval-sub">Review, edit, or reject each email before it is sent</div>
+      </div>
+      <div class="chip cv" style="margin-left:auto">LangGraph pause</div>
+    </div>
+    <div class="approval-body" id="approvalEmailList"></div>
+    <div class="approval-footer">
+      <button class="approve-all-btn" onclick="approveAll()">Approve All</button>
+      <span class="approval-count" id="approvalCount">0 / 0 approved</span>
+      <button class="submit-approval-btn" onclick="submitApproval()">Submit & Continue Pipeline →</button>
+    </div>
+  </div>
+</div>
+
+<button class="audit-btn" onclick="toggleAudit()">// Audit Trail</button>
+<div class="audit-drawer" id="auditDrawer">
+  <div class="audit-inner" id="auditBox"><div class="empty">Run pipeline to populate audit trail.</div></div>
+</div>
+
+<script>
+// ── DRAG HANDLE ──
+const handle = document.getElementById('dragHandle');
+const logBox = document.getElementById('logBox');
+const mainPanel = document.getElementById('mainPanel');
+let dragging = false, startY = 0, startH = 0;
+handle.addEventListener('mousedown', e => { dragging=true; startY=e.clientY; startH=logBox.offsetHeight; document.body.style.cursor='row-resize'; e.preventDefault(); });
+document.addEventListener('mousemove', e => { if(!dragging)return; const delta=e.clientY-startY; const newH=Math.max(60,Math.min(mainPanel.offsetHeight-80,startH+delta)); logBox.style.height=newH+'px'; });
+document.addEventListener('mouseup', () => { dragging=false; document.body.style.cursor=''; });
+
+// ── STATE ──
+let auditOpen=false, inputMode='text', currentMeetingId=null, pendingEmails=[];
+let emailStates={}; // {index: 'approved'|'rejected'|'edited', body: string}
+
+// ── TABS ──
+function switchTab(tab){
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['pipeline','board'][i]===tab));
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+tab).classList.add('active');
+  if(tab==='board')loadTaskBoard();
+}
+function setInputMode(mode){
+  inputMode=mode;
+  document.querySelectorAll('.itab').forEach((t,i)=>t.classList.toggle('active',['text','audio','pdf'][i]===mode));
+  document.getElementById('transcript').style.display=mode==='text'?'block':'none';
+  document.getElementById('audioZone').classList.toggle('active',mode==='audio');
+  document.getElementById('pdfZone').classList.toggle('active',mode==='pdf');
+  document.getElementById('uploadStatus').textContent='';
+}
+async function handleAudioUpload(input){
+  const file=input.files[0];if(!file)return;
+  document.getElementById('uploadStatus').textContent='Transcribing with Whisper...';
+  const fd=new FormData();fd.append('file',file);
+  const res=await fetch('/upload/audio',{method:'POST',body:fd});
+  const data=await res.json();
+  if(data.error){document.getElementById('uploadStatus').textContent='Error: '+data.error;return;}
+  document.getElementById('transcript').value=data.transcript;
+  setInputMode('text');
+  document.getElementById('uploadStatus').textContent='Transcribed '+data.words+' words';
+}
+async function handlePdfUpload(input){
+  const file=input.files[0];if(!file)return;
+  document.getElementById('uploadStatus').textContent='Extracting PDF text...';
+  const fd=new FormData();fd.append('file',file);
+  const res=await fetch('/upload/pdf',{method:'POST',body:fd});
+  const data=await res.json();
+  if(data.error){document.getElementById('uploadStatus').textContent='Error: '+data.error;return;}
+  document.getElementById('transcript').value=data.transcript;
+  setInputMode('text');
+  document.getElementById('uploadStatus').textContent='Extracted '+data.chars+' characters';
+}
+function toggleAudit(){auditOpen=!auditOpen;document.getElementById('auditDrawer').classList.toggle('open',auditOpen);}
+function ts(){return new Date().toTimeString().slice(0,8);}
+function addLog(agent,msg,level=''){
+  const box=document.getElementById('logBox');
+  const ac={EXTRACTOR:'ex',ACTIONWRITER:'aw',TASKTRACKER:'tk',AUDITOR:'au',GMAIL:'gm',CALENDAR:'ca',WHISPER:'wh',SLACK:'sl',MEMORY:'au',SYSTEM:''}[agent]||'';
+  box.innerHTML+=`<div class="logrow"><span class="lts">${ts()}</span><span class="lag ${ac}">${agent}</span><span class="lmsg ${level}">${msg}</span></div>`;
+  box.scrollTop=box.scrollHeight;
+}
+function setStatus(state,text,health){
+  document.getElementById('stOrb').className='orb '+state;
+  document.getElementById('stText').textContent=text;
+  if(health){const c=document.getElementById('healthChip');c.className='chip '+(health==='healthy'?'cg':'ca');c.textContent=health.toUpperCase();}
+}
+
+// ── PIPELINE ──
+async function runPipeline(){
+  const t=document.getElementById('transcript').value.trim();if(!t)return;
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spin"></span>Running...';
+  setStatus('running','PROCESSING',null);
+  ['tasksBox','decisionsBox','unresolvedBox','recurringBox','approvalPane','escalationsBox','calendarBox','recoveryBox','auditBox','draftsBox']
+    .forEach(id=>{document.getElementById(id).innerHTML='<div class="empty">Processing...</div>';});
+  document.getElementById('logBox').innerHTML='';
+  ['mT','mD','mE','mEs','mC','mR'].forEach(id=>{document.getElementById(id).textContent='—';});
+  document.getElementById('approvalBadge').innerHTML='';
+  addLog('SYSTEM','LangGraph pipeline initiated');
+
+  const res=await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({transcript:t})});
+  const reader=res.body.getReader(),dec=new TextDecoder();
+
+  while(true){
+    const{done,value}=await reader.read();if(done)break;
+    for(const line of dec.decode(value).split('\n').filter(l=>l.startsWith('data:'))){
+      try{
+        const{event,data}=JSON.parse(line.slice(5));
+        if(event==='status'){
+          const ag=data.includes('Extractor')?'EXTRACTOR':data.includes('Action')?'ACTIONWRITER':data.includes('Tracker')?'TASKTRACKER':data.includes('Calendar')?'CALENDAR':data.includes('Auditor')?'AUDITOR':data.includes('Slack')?'SLACK':data.includes('Gmail')?'GMAIL':'SYSTEM';
+          addLog(ag,data.replace(/[🔍✍️🚨📅📋📧⏸]/g,'').trim());
+        }
+        if(event==='extracted'){
+          document.getElementById('mT').textContent=data.tasks.length;
+          document.getElementById('mD').textContent=data.decisions.length;
+          document.getElementById('mR').textContent=(data.recurring_issues||[]).length;
+          addLog('EXTRACTOR',`Found ${data.tasks.length} tasks, ${data.decisions.length} decisions`,'ok');
+
+          // Render tasks with confidence bars
+          let th=data.tasks.map(t=>{
+            const conf=Math.round((t.confidence||0.85)*100);
+            const barClass=conf>=80?'conf-high':conf>=60?'conf-mid':'conf-low';
+            const confColor=conf>=80?'var(--green)':conf>=60?'var(--amber)':'var(--red)';
+            return `<div class="titem">
+              <div class="town">${t.owner} <span style="font-size:9px;color:${confColor}">${conf}%</span></div>
+              <div class="conf-bar ${barClass}" style="width:${conf}%"></div>
+              <div class="ttext">${t.task}</div>
+              <div class="tdl">due ${t.deadline}</div>
+            </div>`;
+          }).join('')||'<div class="empty">None.</div>';
+          document.getElementById('tasksBox').innerHTML=th;
+          document.getElementById('decisionsBox').innerHTML=data.decisions.map(d=>`<span class="dtag dtag-d">${d}</span>`).join('')||'<div class="empty">None.</div>';
+          document.getElementById('unresolvedBox').innerHTML=data.unresolved.map(u=>`<span class="dtag dtag-u">${u}</span>`).join('')||'<div class="empty">None.</div>';
+          const ri=data.recurring_issues||[];
+          document.getElementById('recurringBox').innerHTML=ri.length?ri.map(r=>`<span class="dtag dtag-r">! ${r.owner}: ${r.count} open</span>`).join(''):'<div class="empty">None.</div>';
+        }
+        if(event==='emails_pending'){
+          pendingEmails=data.emails;
+          currentMeetingId=data.meeting_id;
+        }
+        if(event==='awaiting_approval'){
+          setStatus('approval','AWAITING APPROVAL',null);
+          document.getElementById('stOrb').className='orb approval';
+          document.getElementById('approvalBadge').innerHTML='<span class="chip cr" style="animation:blink .8s step-end infinite">PAUSED</span>';
+          addLog('SYSTEM','Pipeline paused — human review required','wn');
+
+          // Show inline approval pane
+          renderApprovalPane(pendingEmails);
+          // Also show overlay
+          renderApprovalOverlay(pendingEmails);
+          document.getElementById('approvalOverlay').classList.add('active');
+        }
+        if(event==='escalations'){
+          document.getElementById('mEs').textContent=data.length;
+          document.getElementById('escalationsBox').innerHTML=!data.length
+            ?'<div class="escitem esc-ok"><div class="escst">All clear</div><div class="esctx">No overdue or at-risk tasks. Task Board is current.</div></div>'
+            :data.map(e=>{
+                const cls=e.days_left<0?'esc-ov':'esc-at';
+                const st=e.days_left<0?'OVERDUE':'AT RISK';
+                const info=e.days_left<0?Math.abs(e.days_left)+'d overdue':e.days_left+'d remaining';
+                const sync=e.days_left<0?'<div style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:3px;">synced to Task Board</div>':'';
+                return '<div class="escitem '+cls+'"><div class="escst">'+st+'</div><div class="esctx">'+e.task+'</div><div class="escow">'+e.owner+' · '+info+'</div>'+sync+'</div>';
+              }).join('');
+          if(data.length){
+            addLog('TASKTRACKER',data.length+' escalation(s) — Task Board synced','wn');
+            if(document.getElementById('view-board').classList.contains('active')) loadTaskBoard();
+          } else {
+            addLog('TASKTRACKER','All tasks on track','ok');
+          }
+        }
+        if(event==='calendar_events'){
+          document.getElementById('mC').textContent=data.length;
+          document.getElementById('calendarBox').innerHTML=data.length
+            ?data.map(e=>`<div class="calitem"><div class="cal-title">${e.task}</div><div class="cal-meta">${e.owner} · ${e.deadline}</div></div>`).join('')
+            :'<div class="empty">No datable tasks.</div>';
+          if(data.length)addLog('CALENDAR',`Created ${data.length} calendar event(s)`,'ok');
+        }
+      }catch(e){}
+    }
+  }
+  btn.disabled=false;btn.innerHTML='▶ Execute Pipeline';
+}
+
+// ── APPROVAL ──
+function renderApprovalPane(emails){
+  let html='<div style="font-family:var(--mono);font-size:9px;color:var(--violet);margin-bottom:10px;letter-spacing:1px;">PIPELINE PAUSED · Review emails before sending</div>';
+  emails.forEach((e,i)=>{
+    html+=`<div class="eitem" style="border-bottom:1px solid var(--line);padding:8px 0;" id="apane_${i}">
+      <div class="eto" style="display:flex;align-items:center;gap:8px;">
+        → ${e.to}
+        <button class="eabtn eabtn-approve sel" onclick="paneApprove(${i})" id="pbtn_approve_${i}">Approve</button>
+        <button class="eabtn eabtn-reject" onclick="paneReject(${i})" id="pbtn_reject_${i}">Reject</button>
+      </div>
+      <div class="ebody" id="pane_body_${i}" style="margin-top:6px;font-size:11px;color:var(--text2);line-height:1.6;white-space:pre-wrap;">${e.body}</div>
+    </div>`;
+    emailStates[i]={status:'approved',body:e.body};
+  });
+  document.getElementById('approvalPane').innerHTML=html;
+}
+
+function paneApprove(i){
+  emailStates[i].status='approved';
+  document.getElementById('pbtn_approve_'+i).classList.add('sel');
+  document.getElementById('pbtn_reject_'+i).classList.remove('sel');
+  document.getElementById('apane_'+i).style.opacity='1';
+}
+function paneReject(i){
+  emailStates[i].status='rejected';
+  document.getElementById('pbtn_reject_'+i).classList.add('sel');
+  document.getElementById('pbtn_approve_'+i).classList.remove('sel');
+  document.getElementById('apane_'+i).style.opacity='0.4';
+}
+
+function renderApprovalOverlay(emails){
+  emailStates={};
+  emails.forEach((e,i)=>{ emailStates[i]={status:'approved',body:e.body}; });
+  updateApprovalCount();
+
+  let html='';
+  emails.forEach((e,i)=>{
+    const expanded = i===0 ? 'expanded' : '';
+    html+=`<div class="email-card approved ${expanded}" id="ecard_${i}">
+      <div class="email-card-head" onclick="toggleExpand(${i})">
+        <div class="email-to-label">→ ${e.to}</div>
+        <div class="email-actions" onclick="event.stopPropagation()">
+          <button class="eabtn eabtn-approve sel" id="btn_approve_${i}" onclick="setEmailState(${i},'approved')">Approve</button>
+          <button class="eabtn eabtn-edit" onclick="toggleEdit(${i})">Edit</button>
+          <button class="eabtn eabtn-reject" id="btn_reject_${i}" onclick="setEmailState(${i},'rejected')">Reject</button>
+        </div>
+        <span class="email-expand-icon" id="expand_icon_${i}">${i===0?'▲':'▼'}</span>
+      </div>
+      <div class="email-body-area">
+        <div class="email-body-text" id="ebody_text_${i}">${e.body}</div>
+        <textarea class="email-body-edit" id="ebody_edit_${i}" onchange="emailStates[${i}].body=this.value">${e.body}</textarea>
+      </div>
+    </div>`;
+  });
+  document.getElementById('approvalEmailList').innerHTML=html;
+}
+
+function toggleExpand(i){
+  const card=document.getElementById('ecard_'+i);
+  const isExpanded=card.classList.toggle('expanded');
+  document.getElementById('expand_icon_'+i).textContent=isExpanded?'▲':'▼';
+}
+
+function setEmailState(i,state){
+  emailStates[i].status=state;
+  const card=document.getElementById('ecard_'+i);
+  const wasExpanded=card.classList.contains('expanded');
+  card.className='email-card '+(state==='approved'?'approved':'rejected')+(wasExpanded?' expanded':'');
+  document.getElementById('btn_approve_'+i).classList.toggle('sel',state==='approved');
+  document.getElementById('btn_reject_'+i).classList.toggle('sel',state==='rejected');
+  updateApprovalCount();
+}
+function toggleEdit(i){
+  const text=document.getElementById('ebody_text_'+i);
+  const edit=document.getElementById('ebody_edit_'+i);
+  const editing=edit.style.display==='block';
+  // Make sure card is expanded when editing
+  const card=document.getElementById('ecard_'+i);
+  if(!card.classList.contains('expanded')) toggleExpand(i);
+  edit.style.display=editing?'none':'block';
+  text.style.display=editing?'block':'none';
+  if(!editing){edit.value=emailStates[i].body;edit.focus();}
+  else{emailStates[i].body=edit.value;text.textContent=edit.value;}
+}
+function approveAll(){
+  Object.keys(emailStates).forEach(i=>setEmailState(parseInt(i),'approved'));
+}
+function updateApprovalCount(){
+  const approved=Object.values(emailStates).filter(e=>e.status==='approved').length;
+  document.getElementById('approvalCount').textContent=`${approved} / ${Object.keys(emailStates).length} approved`;
+}
+async function submitApproval(){
+  const approvedEmails=[];
+  pendingEmails.forEach((e,i)=>{
+    if(emailStates[i]?.status==='approved'){
+      approvedEmails.push({...e,body:emailStates[i].body});
+    }
+  });
+
+  document.getElementById('approvalOverlay').classList.remove('active');
+  setStatus('running','RESUMING PIPELINE',null);
+  addLog('SYSTEM',`Approved ${approvedEmails.length} emails, resuming pipeline...`,'ok');
+  document.getElementById('mE').textContent=approvedEmails.length;
+
+  const res=await fetch('/approve',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({meeting_id:currentMeetingId,approved_emails:approvedEmails})
+  });
+  const data=await res.json();
+
+  // Update drafts
+  const b=document.getElementById('draftsBox');
+  b.innerHTML='';
+  approvedEmails.forEach(e=>{
+    b.innerHTML+=`<div class="ditem"><div class="ddot"></div><div class="dname">${e.to}</div><div class="did">draft created</div></div>`;
+    addLog('GMAIL',`Draft created for ${e.to}`,'ok');
+  });
+
+  // Update audit
+  if(data.report){
+    const h=data.report.summary.pipeline_health;
+    setStatus(h==='healthy'?'active':'running',h.toUpperCase(),h);
+    const warns=data.report.audit_trail.filter(e=>e.level==='warning'||e.level==='error');
+    document.getElementById('recoveryBox').innerHTML=warns.length
+      ?warns.map(e=>`<div class="ritem"><div class="rst">${e.level}</div><div class="rtx">${e.action}</div><div class="rown">${e.agent} · ${e.detail}</div></div>`).join('')
+      :'<div class="ritem clean"><div class="rst">Clean run</div><div class="rtx">No self-correction events triggered.</div></div>';
+    document.getElementById('auditBox').innerHTML=data.report.audit_trail.map(e=>`<div class="arow ${e.level}"><span>${e.time.slice(11,19)}</span><span class="aag">${e.agent}</span><span class="aac">${e.action}</span><span>${e.detail}</span></div>`).join('');
+    addLog('AUDITOR',`Pipeline complete · health=${h}`,'ok');
+    addLog('SLACK','Summary posted to #meeting-intelligence','ok');
+  }
+
+  document.getElementById('approvalBadge').innerHTML='<span class="chip cg">COMPLETE</span>';
+  document.getElementById('runBtn').disabled=false;
+  document.getElementById('runBtn').innerHTML='▶ Execute Pipeline';
+}
+
+// ── TASK BOARD ──
+async function loadTaskBoard(){
+  const res=await fetch('/tasks');const tasks=await res.json();
+  const open=tasks.filter(t=>t.status==='open');
+  const overdue=tasks.filter(t=>t.status==='overdue');
+  const done=tasks.filter(t=>t.status==='done');
+  document.getElementById('countOpen').textContent=open.length;
+  document.getElementById('countOverdue').textContent=overdue.length;
+  document.getElementById('countDone').textContent=done.length;
+  function card(t){
+    const conf=t.confidence?Math.round(t.confidence*100):85;
+    const confColor=conf>=80?'var(--green)':conf>=60?'var(--amber)':'var(--red)';
+    const isDone=t.status==='done';
+    return`<div class="board-card">
+      <div class="bc-owner">${t.owner}</div>
+      <div class="bc-task">${t.task}</div>
+      <div class="bc-meta">due ${t.deadline}</div>
+      <div class="bc-conf" style="color:${confColor}">${conf}% confidence</div>
+      <div class="bc-meeting">${t.meeting_id}</div>
+      ${!isDone?`<button class="status-btn sbtn-done" onclick="markDone(${t.id})">Mark Done</button>`:`<button class="status-btn sbtn-open" onclick="markOpen(${t.id})">Reopen</button>`}
+    </div>`;
+  }
+  document.getElementById('colOpen').innerHTML=open.length?open.map(card).join(''):'<div class="empty" style="padding:12px">No open tasks.</div>';
+  document.getElementById('colOverdue').innerHTML=overdue.length?overdue.map(card).join(''):'<div class="empty" style="padding:12px">No overdue tasks.</div>';
+  document.getElementById('colDone').innerHTML=done.length?done.map(card).join(''):'<div class="empty" style="padding:12px">No completed tasks.</div>';
+}
+async function markDone(id){await fetch('/tasks/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id,status:'done'})});loadTaskBoard();}
+async function clearTasks(){
+  if(!confirm('Clear all tasks from the database? This cannot be undone.')) return;
+  await fetch('/tasks/clear',{method:'POST'});
+  loadTaskBoard();
+  addLog('SYSTEM','Task board cleared','ok');
+}
+async function markOpen(id){await fetch('/tasks/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id,status:'open'})});loadTaskBoard();}
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+token.pickle
+credentials.json
+.env
+__pycache__/
+*.pyc
+*.db
+chroma_store/
+uploads/
+audit_report.json
+*.mp3
+*.wav
+*.m4a
+.env.local
