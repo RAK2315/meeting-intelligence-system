@@ -1,5 +1,10 @@
-from google import genai
+import requests, os
 
-client = genai.Client(api_key="AIzaSyCXA49dj9VPOg3lhqNfsW611E3ET-4d5aU")
-for model in client.models.list():
-    print(model.name)
+url = f"https://api.notion.com/v1/databases/{os.getenv('NOTION_DATABASE_ID')}"
+headers = {
+    "Authorization": f"Bearer {os.getenv('NOTION_TOKEN')}",
+    "Notion-Version": "2022-06-28"
+}
+
+res = requests.get(url, headers=headers)
+print(res.json())

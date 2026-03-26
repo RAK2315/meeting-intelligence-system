@@ -2,20 +2,27 @@ import os, json, pickle, base64, time, sqlite3, urllib.request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
 import fitz
 import chromadb
 from chromadb.utils import embedding_functions
 from groq import Groq
 from typing import TypedDict, List, Optional
 from langgraph.graph import StateGraph, END
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- CONFIG ---
-from dotenv import load_dotenv
-load_dotenv()
-GROQ_KEY = os.getenv("GROQ_KEY", "your_groq_key_here")
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK", "your_slack_webhook_here")
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_KEY = os.getenv("GROQ_KEY", "")
+SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK", "")
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "")
+
+# Model routing: small model for simple tasks, large for extraction
+GROQ_LARGE = "llama-3.3-70b-versatile"   # extraction, complex reasoning
+GROQ_SMALL = "llama-3.1-8b-instant"       # email drafting, simple tasks
+
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/gmail.send',
@@ -33,20 +40,28 @@ def log(agent, action, detail, level="info"):
     audit_log.append(entry)
     print(f"[{agent}] {'⚠' if level=='warning' else '✗' if level=='error' else '✓'} {action}: {detail}")
 
-# --- LLM CALL ---
-def call_llm(prompt, agent_name, max_retries=3):
+# --- LLM CALL WITH MODEL ROUTING ---
+def call_llm(prompt, agent_name, max_retries=3, use_large=False):
+    """Route to small model by default, large for complex tasks."""
+    model = GROQ_LARGE if use_large else GROQ_SMALL
     for attempt in range(max_retries):
         try:
             response = groq_client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=4000,
                 temperature=0.1
             )
             return response.choices[0].message.content
         except Exception as e:
-            log(agent_name, "error_detected", str(e)[:100], "error")
-            time.sleep(2)
+            err = str(e)
+            if "model" in err.lower() and attempt == 0:
+                # Fallback to large if small fails
+                model = GROQ_LARGE
+                log(agent_name, "model_fallback", f"Small model failed, routing to large", "warning")
+            else:
+                log(agent_name, "error_detected", err[:100], "error")
+                time.sleep(2)
     log(agent_name, "fallback_activated", "All retries failed", "error")
     return None
 
@@ -92,6 +107,11 @@ def init_db():
         created_at TEXT, updated_at TEXT)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS meetings (
         id TEXT PRIMARY KEY, summary TEXT, created_at TEXT, health TEXT)""")
+    # Add stall_flagged column if not exists
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN stall_flagged INTEGER DEFAULT 0")
+    except:
+        pass
     conn.commit()
     conn.close()
 
@@ -115,21 +135,20 @@ def save_tasks_to_db(meeting_id, tasks):
     log("Database", "saved", f"Saved {len(tasks)} tasks for {meeting_id}")
 
 def sync_overdue_status(meeting_id, escalations):
-    """After saving tasks, mark overdue ones correctly in DB."""
     if not escalations:
         return
     conn = sqlite3.connect(DB_PATH)
-    overdue_count = 0
+    count = 0
     for task in escalations:
         if task.get('days_left', 0) < 0:
             conn.execute(
                 "UPDATE tasks SET status='overdue', updated_at=? WHERE meeting_id=? AND owner=? AND task=?",
                 (datetime.now().isoformat(), meeting_id, task['owner'], task['task']))
-            overdue_count += 1
+            count += 1
     conn.commit()
     conn.close()
-    if overdue_count:
-        log("Database", "overdue_synced", f"Marked {overdue_count} tasks as overdue in Task Board")
+    if count:
+        log("Database", "overdue_synced", f"Marked {count} tasks as overdue")
 
 def get_all_tasks():
     conn = sqlite3.connect(DB_PATH)
@@ -166,6 +185,26 @@ def get_recurring_issues(owners):
     conn.close()
     return recurring
 
+def detect_stalled_tasks(hours_threshold=48):
+    """Find tasks with no update in X hours — SLA breach prevention."""
+    conn = sqlite3.connect(DB_PATH)
+    cutoff = (datetime.now() - timedelta(hours=hours_threshold)).isoformat()
+    rows = conn.execute(
+        "SELECT id,meeting_id,owner,task,deadline,status,updated_at FROM tasks WHERE status='open' AND updated_at < ? AND stall_flagged=0",
+        (cutoff,)).fetchall()
+    conn.close()
+    stalled = [{"id":r[0],"meeting_id":r[1],"owner":r[2],"task":r[3],
+                "deadline":r[4],"status":r[5],"updated_at":r[6]} for r in rows]
+    return stalled
+
+def mark_tasks_stall_flagged(task_ids):
+    conn = sqlite3.connect(DB_PATH)
+    for tid in task_ids:
+        conn.execute("UPDATE tasks SET stall_flagged=1, updated_at=? WHERE id=?",
+                     (datetime.now().isoformat(), tid))
+    conn.commit()
+    conn.close()
+
 # --- CHROMADB ---
 def get_chroma_collection():
     chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -182,15 +221,67 @@ def store_meeting_in_memory(meeting_id, transcript, extracted_data):
         metadatas=[{"meeting_id": meeting_id, "timestamp": datetime.now().isoformat()}])
     log("Memory", "stored", "Meeting stored in ChromaDB")
 
+# --- NOTION INTEGRATION ---
+def create_notion_task(task, owner, deadline, meeting_id, confidence):
+    """Create a task in Notion database."""
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+        log("Notion", "skipped", "No Notion credentials configured", "warning")
+        return None
+    try:
+        props = {
+            "Name": {"title": [{"text": {"content": task[:100]}}]},
+            "Owner": {"rich_text": [{"text": {"content": owner}}]},
+            "Meeting": {"rich_text": [{"text": {"content": meeting_id}}]},
+            "Status": {"select": {"name": "Not started"}},
+            "Confidence": {"number": round(confidence * 100)}
+        }
+        # Only add Deadline if it's a valid date string
+        if deadline and deadline not in ("not specified", "Not specified", "TBD", ""):
+            try:
+                from datetime import datetime
+                datetime.strptime(deadline, "%Y-%m-%d")
+                props["Deadline"] = {"date": {"start": deadline}}
+            except ValueError:
+                pass  # Skip invalid dates
+        payload = {
+            "parent": {"database_id": NOTION_DATABASE_ID},
+            "properties": props
+        }
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            "https://api.notion.com/v1/pages",
+            data=data,
+            headers={
+                'Authorization': f'Bearer {NOTION_TOKEN}',
+                'Content-Type': 'application/json',
+                'Notion-Version': '2022-06-28'
+            }
+        )
+        response = urllib.request.urlopen(req)
+        result = json.loads(response.read())
+        log("Notion", "task_created", f"{owner}: {task[:40]}")
+        return result.get('id')
+    except Exception as e:
+        log("Notion", "task_failed", str(e)[:80], "warning")
+        return None
+
 # --- SLACK ---
 def post_to_slack(meeting_id, extracted_data, escalations):
+    if not SLACK_WEBHOOK:
+        log("Slack", "skipped", "No webhook configured", "warning")
+        return
     try:
         tasks_text = "\n".join([
-            f"• {t['owner']}: {t['task']} (due {t['deadline']}) — {int(t.get('confidence',0.85)*100)}% confidence"
+            f"• {t['owner']}: {t['task']} (due {t['deadline']}) — {int(t.get('confidence',0.85)*100)}% conf"
             for t in extracted_data['tasks'][:8]])
         decisions_text = "\n".join([f"✓ {d}" for d in extracted_data['decisions']]) or "None"
-        esc_text = f"🚨 {len(escalations)} escalation(s) triggered" if escalations else "✅ All tasks on track"
+        esc_text = f"🚨 {len(escalations)} escalation(s)" if escalations else "✅ All on track"
         unresolved_text = "\n".join([f"? {u}" for u in extracted_data['unresolved']]) or "None"
+
+        # Flag ambiguous tasks
+        ambiguous = [t for t in extracted_data['tasks'] if t.get('confidence', 1) < 0.6 or t.get('owner') == 'Unknown']
+        ambiguous_text = "\n".join([f"⚠ {t['task']} — owner unclear" for t in ambiguous]) if ambiguous else "None"
+
         payload = {
             "blocks": [
                 {"type": "header", "text": {"type": "plain_text", "text": f"🧠 MIS Report — {meeting_id}"}},
@@ -198,8 +289,9 @@ def post_to_slack(meeting_id, extracted_data, escalations):
                 {"type": "divider"},
                 {"type": "section", "text": {"type": "mrkdwn", "text": f"*Decisions*\n{decisions_text}"}},
                 {"type": "section", "text": {"type": "mrkdwn", "text": f"*Unresolved*\n{unresolved_text}"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*Needs Clarification*\n{ambiguous_text}"}},
                 {"type": "section", "text": {"type": "mrkdwn", "text": esc_text}},
-                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Posted by MIS · {datetime.now().strftime('%Y-%m-%d %H:%M')}"}]}
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"MIS · {datetime.now().strftime('%Y-%m-%d %H:%M')}"}]}
             ]
         }
         data = json.dumps(payload).encode('utf-8')
@@ -208,6 +300,26 @@ def post_to_slack(meeting_id, extracted_data, escalations):
         log("Slack", "posted", "Summary posted to #meeting-intelligence")
     except Exception as e:
         log("Slack", "post_failed", str(e)[:80], "warning")
+
+def post_stall_alert_to_slack(stalled_tasks):
+    if not SLACK_WEBHOOK or not stalled_tasks:
+        return
+    try:
+        tasks_text = "\n".join([f"• {t['owner']}: {t['task']} (last updated: {t['updated_at'][:10]})" for t in stalled_tasks[:5]])
+        payload = {
+            "blocks": [
+                {"type": "header", "text": {"type": "plain_text", "text": "⚠️ MIS Stall Alert — Tasks Stuck 48h+"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{len(stalled_tasks)} task(s) have had no update in 48+ hours:*\n{tasks_text}"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "These tasks may be stalled. Consider following up or reassigning."}},
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Auto-detected by MIS TaskTracker · {datetime.now().strftime('%Y-%m-%d %H:%M')}"}]}
+            ]
+        }
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(SLACK_WEBHOOK, data=data, headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req)
+        log("Stall", "slack_alert_sent", f"{len(stalled_tasks)} stalled tasks reported")
+    except Exception as e:
+        log("Stall", "slack_failed", str(e)[:80], "warning")
 
 # ─────────────────────────────────────────────
 # LANGGRAPH STATE
@@ -221,9 +333,11 @@ class PipelineState(TypedDict):
     approved_emails: Optional[List[dict]]
     escalations: Optional[List[dict]]
     calendar_events: Optional[List[dict]]
+    notion_tasks: Optional[List[dict]]
     report: Optional[dict]
     error_count: int
     awaiting_approval: bool
+    needs_clarification: Optional[List[dict]]
     gmail_service: object
     calendar_service: object
 
@@ -235,50 +349,69 @@ def node_extractor(state: PipelineState) -> PipelineState:
     log("Extractor", "start", "Parsing transcript")
     today = datetime.now().strftime("%Y-%m-%d")
 
+    # Use LARGE model for extraction — most critical step
     prompt = f"""You are a meeting analyst. Today's date is {today}. Extract structured data ONLY from the transcript below.
 
 IMPORTANT RULES:
 - Only extract names, tasks, decisions EXPLICITLY mentioned in this transcript
-- Do NOT invent names not in the transcript. If unclear use "Unknown"
+- Do NOT invent names. If owner is genuinely unclear, use "Unknown"
 - Confidence reflects how clearly task/owner/deadline is stated (0.0 to 1.0)
+- If confidence < 0.6, set needs_clarification to true for that task
 
-DATE RULES — critical:
+DATE RULES:
 - Convert ALL relative dates to absolute YYYY-MM-DD using today = {today}
-- "today" = {today}
-- "tomorrow" = next day after {today}
-- "end of day" = {today}
-- "March 10th" or "March 10" = 2026-03-10
-- "in two days" = 2 days after {today}
-- If a task is described as overdue, extract the ORIGINAL missed deadline date
-- Only use "not specified" if absolutely no date information exists anywhere for that task
+- "today" = {today}, "tomorrow" = next day, "end of week" = nearest Friday
+- "March 10th" = 2026-03-10. If month passed use 2026.
+- If task is described as overdue, extract the ORIGINAL missed deadline
+- Use "not specified" only if truly no date information exists
 
-Return ONLY valid JSON, no markdown, no explanation:
+Return ONLY valid JSON, no markdown:
 {{
   "decisions": ["decision1"],
   "tasks": [
-    {{"task": "clear description", "owner": "name from transcript", "deadline": "YYYY-MM-DD or not specified", "confidence": 0.95}}
+    {{
+      "task": "clear description",
+      "owner": "name or Unknown",
+      "deadline": "YYYY-MM-DD or not specified",
+      "confidence": 0.95,
+      "needs_clarification": false,
+      "clarification_reason": ""
+    }}
   ],
-  "unresolved": ["question or issue with no resolution"]
+  "unresolved": ["question with no resolution"]
 }}
 
 TRANSCRIPT:
 {state['transcript']}"""
 
-    raw = call_llm(prompt, "Extractor")
+    raw = call_llm(prompt, "Extractor", use_large=True)
 
     if raw is None:
         log("Extractor", "fallback", "Using empty structure", "error")
         state['extracted'] = {"decisions":[],"tasks":[],"unresolved":["Extraction failed"],"recurring_issues":[]}
+        state['needs_clarification'] = []
         state['error_count'] = state.get('error_count', 0) + 1
         return state
 
     try:
         cleaned = raw.strip().replace("```json","").replace("```","").strip()
         data = json.loads(cleaned)
+
         for t in data.get('tasks', []):
             if 'confidence' not in t:
                 t['confidence'] = 0.85
+            if 'needs_clarification' not in t:
+                t['needs_clarification'] = t.get('confidence', 1) < 0.6 or t.get('owner') == 'Unknown'
+            if 'clarification_reason' not in t:
+                t['clarification_reason'] = ''
+
         log("Extractor", "done", f"Found {len(data['tasks'])} tasks, {len(data['decisions'])} decisions")
+
+        # Identify tasks needing clarification
+        clarification_needed = [t for t in data['tasks'] if t.get('needs_clarification')]
+        if clarification_needed:
+            log("Extractor", "clarification_needed",
+                f"{len(clarification_needed)} tasks need human clarification", "warning")
 
         low_conf = [t for t in data['tasks'] if t.get('confidence', 1) < 0.7]
         if low_conf:
@@ -290,28 +423,34 @@ TRANSCRIPT:
             log("Extractor", "recurring_issue", f"{r['owner']} has {r['count']} open tasks from past meetings", "warning")
 
         state['extracted'] = data
+        state['needs_clarification'] = clarification_needed
 
     except json.JSONDecodeError:
         log("Extractor", "json_repair", "Malformed JSON, repairing", "warning")
-        fixed = call_llm(f"Fix this JSON, return ONLY valid JSON:\n{raw}", "Extractor")
+        # Use small model for repair — simple task
+        fixed = call_llm(f"Fix this JSON, return ONLY valid JSON:\n{raw}", "Extractor", use_large=False)
         try:
             data = json.loads(fixed.strip().replace("```json","").replace("```","").strip())
             for t in data.get('tasks', []):
                 if 'confidence' not in t:
                     t['confidence'] = 0.7
+                t.setdefault('needs_clarification', False)
+                t.setdefault('clarification_reason', '')
             data['recurring_issues'] = []
             state['extracted'] = data
+            state['needs_clarification'] = []
             log("Extractor", "json_repaired", "Repair successful")
         except:
             log("Extractor", "json_repair_failed", "Repair failed", "error")
             state['extracted'] = {"decisions":[],"tasks":[],"unresolved":["Extraction failed"],"recurring_issues":[]}
+            state['needs_clarification'] = []
             state['error_count'] = state.get('error_count', 0) + 1
 
     return state
 
 
 def node_action_writer(state: PipelineState) -> PipelineState:
-    log("ActionWriter", "start", "Drafting emails (batch)")
+    log("ActionWriter", "start", "Drafting emails (batch) — using small model")
     extracted = state['extracted']
 
     if not extracted.get("tasks"):
@@ -331,7 +470,7 @@ def node_action_writer(state: PipelineState) -> PipelineState:
         return state
 
     recurring_notes = {
-        r['owner']: f"(has {r['count']} previously unresolved tasks — be firm about urgency)"
+        r['owner']: f"(has {r['count']} previously unresolved tasks — be firm)"
         for r in extracted.get('recurring_issues', [])
     }
 
@@ -341,24 +480,24 @@ def node_action_writer(state: PipelineState) -> PipelineState:
         for owner, tasks in owners.items()
     ])
 
-    prompt = f"""Write short professional follow-up emails for each person listed below.
-Each email should reference their specific tasks and deadlines.
+    # Use SMALL model for email drafting — cost efficiency
+    prompt = f"""Write short professional follow-up emails for each person below.
 Tasks per person:
 {all_tasks_str}
 
-Key decisions from the meeting: {json.dumps(extracted['decisions'])}
+Decisions: {json.dumps(extracted['decisions'])}
 
-Return a JSON array ONLY — no markdown, no explanation, just the array:
-[{{"to":"name","subject":"Action Items from Today's Meeting","body":"email body text here"}}]"""
+Return JSON array ONLY, no markdown:
+[{{"to":"name","subject":"Action Items from Today's Meeting","body":"email body"}}]"""
 
-    raw = call_llm(prompt, "ActionWriter")
+    raw = call_llm(prompt, "ActionWriter", use_large=False)
 
     if raw is None:
         emails = []
         for owner, tasks in owners.items():
             task_lines = "\n".join([f"- {t['task']} by {t['deadline']}" for t in tasks])
             emails.append({"to": owner, "subject": "Action Items from Today's Meeting",
-                           "body": f"Hi {owner},\n\nYour action items from today's meeting:\n\n{task_lines}\n\nBest regards"})
+                           "body": f"Hi {owner},\n\nYour action items:\n\n{task_lines}\n\nBest regards"})
         state['emails'] = emails
     else:
         try:
@@ -367,7 +506,7 @@ Return a JSON array ONLY — no markdown, no explanation, just the array:
                 log("ActionWriter", "drafted", f"Email for {e['to']}")
             state['emails'] = emails
         except:
-            log("ActionWriter", "parse_error", "JSON parse failed, using fallback", "warning")
+            log("ActionWriter", "parse_error", "Fallback to templates", "warning")
             emails = []
             for owner, tasks in owners.items():
                 task_lines = "\n".join([f"- {t['task']} by {t['deadline']}" for t in tasks])
@@ -464,6 +603,30 @@ def node_calendar(state: PipelineState) -> PipelineState:
     return state
 
 
+def node_notion(state: PipelineState) -> PipelineState:
+    """Create tasks in Notion database."""
+    if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+        log("Notion", "skipped", "Notion not configured — set NOTION_TOKEN and NOTION_DATABASE_ID in .env")
+        state['notion_tasks'] = []
+        return state
+
+    log("Notion", "start", "Creating tasks in Notion")
+    notion_tasks = []
+    meeting_id = state['meeting_id']
+
+    for task in state['extracted'].get("tasks", []):
+        page_id = create_notion_task(
+            task['task'], task['owner'], task['deadline'],
+            meeting_id, task.get('confidence', 0.85)
+        )
+        if page_id:
+            notion_tasks.append({"task": task['task'], "owner": task['owner'], "notion_id": page_id})
+
+    log("Notion", "done", f"Created {len(notion_tasks)} Notion tasks")
+    state['notion_tasks'] = notion_tasks
+    return state
+
+
 def node_send_emails(state: PipelineState) -> PipelineState:
     gmail = state['gmail_service']
     approved = state.get('approved_emails', [])
@@ -493,9 +656,16 @@ def node_auditor(state: PipelineState) -> PipelineState:
     emails = state.get('approved_emails', state.get('emails', []))
     escalations = state.get('escalations', [])
     calendar_events = state.get('calendar_events', [])
+    notion_tasks = state.get('notion_tasks', [])
+    needs_clarification = state.get('needs_clarification', [])
 
     report = {
         "timestamp": datetime.now().isoformat(),
+        "model_routing": {
+            "extraction": GROQ_LARGE,
+            "email_drafting": GROQ_SMALL,
+            "note": "Smart routing: large model for reasoning, small for generation"
+        },
         "summary": {
             "decisions_count": len(extracted["decisions"]),
             "tasks_count": len(extracted["tasks"]),
@@ -504,14 +674,18 @@ def node_auditor(state: PipelineState) -> PipelineState:
             "calendar_events": len(calendar_events),
             "escalations": len(escalations),
             "recurring_issues": len(extracted.get("recurring_issues", [])),
+            "needs_clarification": len(needs_clarification),
+            "notion_tasks_created": len(notion_tasks),
             "warnings": len(all_warnings),
             "pipeline_health": "degraded" if real_errors else "healthy"
         },
         "decisions": extracted["decisions"],
         "tasks": extracted["tasks"],
         "unresolved": extracted["unresolved"],
+        "needs_clarification": needs_clarification,
         "recurring_issues": extracted.get("recurring_issues", []),
         "calendar_events": calendar_events,
+        "notion_tasks": notion_tasks,
         "audit_trail": audit_log
     }
     with open("audit_report.json", "w") as f:
@@ -541,9 +715,11 @@ def build_graph():
     g.add_node("action_writer", node_action_writer)
     g.add_node("task_tracker", node_task_tracker)
     g.add_node("calendar", node_calendar)
+    g.add_node("notion", node_notion)
     g.add_node("send_emails", node_send_emails)
     g.add_node("auditor", node_auditor)
     g.add_node("slack", node_slack)
+
     g.set_entry_point("extractor")
     g.add_conditional_edges("extractor", should_continue_after_extraction, {
         "action_writer": "action_writer",
@@ -551,7 +727,8 @@ def build_graph():
     })
     g.add_edge("action_writer", "task_tracker")
     g.add_edge("task_tracker", "calendar")
-    g.add_edge("calendar", "auditor")
+    g.add_edge("calendar", "notion")
+    g.add_edge("notion", "auditor")
     g.add_edge("auditor", "slack")
     g.add_edge("slack", END)
     return g.compile()
@@ -559,22 +736,28 @@ def build_graph():
 PIPELINE_GRAPH = build_graph()
 
 # ─────────────────────────────────────────────
-# APPROVAL RESUME — saves tasks THEN syncs overdue
+# APPROVAL RESUME
 # ─────────────────────────────────────────────
 
-def resume_after_approval(state: PipelineState, approved_emails: list) -> PipelineState:
+def resume_after_approval(state: PipelineState, approved_emails: list,
+                          clarifications: dict = None) -> PipelineState:
+    # Apply any clarifications from human
+    if clarifications:
+        for task in state['extracted']['tasks']:
+            task_key = f"{task['owner']}:{task['task']}"
+            if task_key in clarifications:
+                task['owner'] = clarifications[task_key].get('owner', task['owner'])
+                task['deadline'] = clarifications[task_key].get('deadline', task['deadline'])
+                task['needs_clarification'] = False
+                log("Clarification", "applied", f"Updated: {task['task'][:40]}")
+
     state['approved_emails'] = approved_emails
     state['awaiting_approval'] = False
     state = node_send_emails(state)
     state = node_auditor(state)
     state = node_slack(state)
-
-    # Step 1: save all tasks as 'open'
     save_tasks_to_db(state['meeting_id'], state['extracted']['tasks'])
-
-    # Step 2: immediately mark overdue ones correctly
     sync_overdue_status(state['meeting_id'], state.get('escalations', []))
-
     store_meeting_in_memory(state['meeting_id'], state['transcript'], state['extracted'])
     save_meeting_to_db(state['meeting_id'], json.dumps(state['extracted']['decisions']),
                        state['report']['summary']['pipeline_health'])

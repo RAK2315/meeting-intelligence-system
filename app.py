@@ -8,7 +8,10 @@ from agents import (
     get_google_creds, audit_log, init_db,
     transcribe_audio, extract_text_from_pdf,
     get_all_tasks, update_task_status, DB_PATH,
-    node_extractor, node_action_writer, node_task_tracker, node_calendar
+    detect_stalled_tasks, mark_tasks_stall_flagged,
+    post_stall_alert_to_slack,
+    node_extractor, node_action_writer, node_task_tracker,
+    node_calendar, node_notion
 )
 from googleapiclient.discovery import build
 
@@ -26,10 +29,17 @@ class TranscriptRequest(BaseModel):
 class ApprovalRequest(BaseModel):
     meeting_id: str
     approved_emails: list
+    clarifications: dict = {}
 
 class TaskStatusUpdate(BaseModel):
     task_id: int
     status: str
+
+class ClarificationUpdate(BaseModel):
+    meeting_id: str
+    task_key: str
+    owner: str
+    deadline: str
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -57,17 +67,19 @@ async def run_pipeline_stream(req: TranscriptRequest):
             "approved_emails": None,
             "escalations": None,
             "calendar_events": None,
+            "notion_tasks": None,
             "report": None,
             "error_count": 0,
             "awaiting_approval": False,
+            "needs_clarification": [],
             "gmail_service": gmail,
             "calendar_service": cal
         }
 
-        yield send("status", "🔍 Agent 1 [Extractor]: Parsing transcript...")
+        yield send("status", "🔍 Agent 1 [Extractor]: Parsing transcript (llama-70b)...")
         await asyncio.sleep(0.2)
 
-        def run_graph_to_approval(state):
+        def run_to_approval(state):
             state = node_extractor(state)
             if not state['extracted'].get('tasks'):
                 state['emails'] = []
@@ -76,9 +88,10 @@ async def run_pipeline_stream(req: TranscriptRequest):
             state = node_action_writer(state)
             state = node_task_tracker(state)
             state = node_calendar(state)
+            state = node_notion(state)
             return state
 
-        final_state = await asyncio.to_thread(run_graph_to_approval, initial_state)
+        final_state = await asyncio.to_thread(run_to_approval, initial_state)
 
         if final_state is None:
             yield send("error", "Pipeline failed")
@@ -89,10 +102,21 @@ async def run_pipeline_stream(req: TranscriptRequest):
         yield send("extracted", final_state['extracted'])
         yield send("escalations", final_state.get('escalations', []))
         yield send("calendar_events", final_state.get('calendar_events', []))
+        yield send("notion_tasks", final_state.get('notion_tasks', []))
+        yield send("needs_clarification", final_state.get('needs_clarification', []))
         yield send("emails_pending", {
             "meeting_id": meeting_id,
             "emails": final_state.get('emails', [])
         })
+
+        # If there are tasks needing clarification, flag it
+        if final_state.get('needs_clarification'):
+            yield send("status", f"⚠️ {len(final_state['needs_clarification'])} task(s) need clarification")
+            yield send("clarification_required", {
+                "meeting_id": meeting_id,
+                "tasks": final_state['needs_clarification']
+            })
+
         yield send("status", "⏸ Awaiting human approval for emails...")
         yield send("awaiting_approval", {"meeting_id": meeting_id})
 
@@ -104,12 +128,15 @@ async def approve_emails(req: ApprovalRequest):
     state = pipeline_states.get(req.meeting_id)
     if not state:
         return JSONResponse({"error": "Pipeline state not found"}, status_code=404)
-    final_state = await asyncio.to_thread(resume_after_approval, state, req.approved_emails)
+    final_state = await asyncio.to_thread(
+        resume_after_approval, state, req.approved_emails, req.clarifications
+    )
     pipeline_states.pop(req.meeting_id, None)
     return JSONResponse({
         "report": final_state['report'],
         "escalations": final_state.get('escalations', []),
         "calendar_events": final_state.get('calendar_events', []),
+        "notion_tasks": final_state.get('notion_tasks', []),
         "draft_ids": [e['to'] for e in req.approved_emails]
     })
 
@@ -158,4 +185,22 @@ def clear_all_tasks():
     conn.execute("DELETE FROM meetings")
     conn.commit()
     conn.close()
-    return JSONResponse({"ok": True, "message": "All tasks cleared"})
+    return JSONResponse({"ok": True})
+
+
+@app.get("/stalls")
+async def check_stalls():
+    """SLA breach prevention — detect tasks stuck 48h+ with no update."""
+    stalled = detect_stalled_tasks(hours_threshold=48)
+    if stalled:
+        mark_tasks_stall_flagged([t['id'] for t in stalled])
+        await asyncio.to_thread(post_stall_alert_to_slack, stalled)
+    return JSONResponse({
+        "stalled_count": len(stalled),
+        "stalled_tasks": stalled
+    })
+
+
+@app.get("/health")
+def health():
+    return JSONResponse({"status": "ok", "timestamp": datetime.now().isoformat()})

@@ -230,6 +230,23 @@ textarea::placeholder{color:var(--text3)}
 ::-webkit-scrollbar-thumb{background:var(--line2)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spin{display:inline-block;width:10px;height:10px;border:1.5px solid rgba(0,212,255,.3);border-top-color:var(--cyan);border-radius:50%;animation:spin .7s linear infinite;margin-right:8px;vertical-align:middle}
+
+/* CLARIFICATION OVERLAY */
+.clarify-overlay{position:fixed;inset:0;background:rgba(5,7,13,0.95);z-index:1001;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.clarify-overlay.active{display:flex}
+.clarify-modal{background:var(--bg1);border:1px solid var(--amber);border-radius:8px;width:680px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+.clarify-header{padding:16px 20px;border-bottom:1px solid var(--line2);flex-shrink:0}
+.clarify-title{font-family:var(--mono);font-size:12px;color:var(--amber);letter-spacing:1px}
+.clarify-sub{font-family:var(--mono);font-size:10px;color:var(--text3);margin-top:4px}
+.clarify-body{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+.clarify-card{background:var(--bg);border:1px solid rgba(255,184,48,0.3);border-radius:6px;padding:12px 14px}
+.clarify-task{font-size:12px;color:var(--text);margin-bottom:8px}
+.clarify-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.clarify-label{font-family:var(--mono);font-size:9px;color:var(--text3);letter-spacing:1px;margin-bottom:4px}
+.clarify-input{width:100%;background:var(--bg1);border:1px solid var(--line2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:11px;padding:7px 10px;outline:none}
+.clarify-input:focus{border-color:var(--amber)}
+.clarify-footer{padding:14px 20px;border-top:1px solid var(--line2);display:flex;justify-content:flex-end;flex-shrink:0;background:var(--bg1)}
+.clarify-submit{padding:10px 24px;background:var(--amber);border:none;color:var(--bg);font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:1.5px;border-radius:4px;cursor:pointer;text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -244,6 +261,8 @@ textarea::placeholder{color:var(--text3)}
   <div class="chip cv">LangGraph</div>
   <div class="chip cv">5 Agents</div>
   <div class="chip cv">Groq LLM</div>
+  <div class="chip cv">Notion</div>
+  <div class="chip cc" id="stallBtn" onclick="checkStalls()" style="cursor:pointer" title="Check for stalled tasks">Stall Check</div>
   <div class="ml" style="display:flex;align-items:center;gap:10px;">
     <div class="orb" id="stOrb"></div>
     <span id="stText">IDLE</span>
@@ -305,6 +324,8 @@ Priya: Still unresolved, figure out async.</textarea>
           <div class="met"><div class="met-val w" id="mEs">—</div><div class="met-lbl">Escalations</div></div>
           <div class="met"><div class="met-val" id="mC" style="color:#5af">—</div><div class="met-lbl">Cal Events</div></div>
           <div class="met"><div class="met-val" id="mR" style="color:var(--amber)">—</div><div class="met-lbl">Recurring</div></div>
+          <div class="met"><div class="met-val" id="mN" style="color:#ff79c6">—</div><div class="met-lbl">Notion</div></div>
+          <div class="met"><div class="met-val" id="mClarify" style="color:var(--red)">—</div><div class="met-lbl">Clarify</div></div>
         </div>
       </div>
       <div class="sb-sec grow">
@@ -353,6 +374,10 @@ Priya: Still unresolved, figure out async.</textarea>
           <div class="ph"><div class="picon" style="background:var(--green-dim);color:var(--green);">R</div><div class="ptitle">Recovery</div></div>
           <div class="pbody" id="recoveryBox"><div class="empty">No recovery events.</div></div>
         </div>
+        <div class="pane">
+          <div class="ph"><div class="picon" style="background:rgba(255,184,48,0.1);color:var(--amber);">N</div><div class="ptitle">Notion Tasks</div></div>
+          <div class="pbody" id="notionBox"><div class="empty">Awaiting Notion agent...</div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -381,6 +406,21 @@ Priya: Still unresolved, figure out async.</textarea>
         <div class="col-head"><div class="col-title" style="color:var(--green)">Done</div><div class="col-count" id="countDone">0</div></div>
         <div class="col-body" id="colDone"><div class="empty" style="padding:12px">No completed tasks.</div></div>
       </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- CLARIFICATION OVERLAY -->
+<div class="clarify-overlay" id="clarifyOverlay">
+  <div class="clarify-modal">
+    <div class="clarify-header">
+      <div class="clarify-title">⚠ Clarification Required</div>
+      <div class="clarify-sub">These tasks have ambiguous owners or deadlines. Please clarify before the pipeline continues.</div>
+    </div>
+    <div class="clarify-body" id="clarifyBody"></div>
+    <div class="clarify-footer">
+      <button class="clarify-submit" onclick="submitClarifications()">Confirm & Continue →</button>
     </div>
   </div>
 </div>
@@ -504,6 +544,7 @@ async function runPipeline(){
           document.getElementById('mD').textContent=data.decisions.length;
           document.getElementById('mR').textContent=(data.recurring_issues||[]).length;
           addLog('EXTRACTOR',`Found ${data.tasks.length} tasks, ${data.decisions.length} decisions`,'ok');
+          addLog('EXTRACTOR', 'Model routing: llama-70b for extraction, llama-8b for email drafting', 'ok');
 
           // Render tasks with confidence bars
           let th=data.tasks.map(t=>{
@@ -556,6 +597,18 @@ async function runPipeline(){
           } else {
             addLog('TASKTRACKER','All tasks on track','ok');
           }
+        }
+        if(event==='notion_tasks'){
+          renderNotionTasks(data);
+        }
+        if(event==='needs_clarification'){
+          document.getElementById('mClarify').textContent = data.length;
+          if(data.length > 0) {
+            renderClarifications(data);
+          }
+        }
+        if(event==='clarification_required'){
+          // Already handled by needs_clarification event
         }
         if(event==='calendar_events'){
           document.getElementById('mC').textContent=data.length;
@@ -677,7 +730,11 @@ async function submitApproval(){
   const res=await fetch('/approve',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({meeting_id:currentMeetingId,approved_emails:approvedEmails})
+    body:JSON.stringify({
+      meeting_id:currentMeetingId,
+      approved_emails:approvedEmails,
+      clarifications: window._clarifications || {}
+    })
   });
   const data=await res.json();
 
@@ -741,6 +798,85 @@ async function clearTasks(){
   addLog('SYSTEM','Task board cleared','ok');
 }
 async function markOpen(id){await fetch('/tasks/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id,status:'open'})});loadTaskBoard();}
+
+// ── CLARIFICATION ──
+let pendingClarifications = {};
+function renderClarifications(tasks) {
+  pendingClarifications = {};
+  let html = '';
+  tasks.forEach((t, i) => {
+    const key = t.owner + ':' + t.task;
+    pendingClarifications[key] = {owner: t.owner, deadline: t.deadline};
+    html += `<div class="clarify-card">
+      <div class="clarify-task">Task: <strong>${t.task}</strong></div>
+      ${t.clarification_reason ? `<div style="font-family:var(--mono);font-size:9px;color:var(--amber);margin-bottom:8px">${t.clarification_reason || 'Owner or deadline unclear'}</div>` : ''}
+      <div class="clarify-fields">
+        <div>
+          <div class="clarify-label">Owner</div>
+          <input class="clarify-input" id="cowner_${i}" value="${t.owner === 'Unknown' ? '' : t.owner}" placeholder="Who owns this?">
+        </div>
+        <div>
+          <div class="clarify-label">Deadline (YYYY-MM-DD)</div>
+          <input class="clarify-input" id="cdeadline_${i}" value="${t.deadline === 'not specified' ? '' : t.deadline}" placeholder="2026-03-28">
+        </div>
+      </div>
+    </div>`;
+  });
+  document.getElementById('clarifyBody').innerHTML = html;
+  document.getElementById('clarifyOverlay').classList.add('active');
+  addLog('SYSTEM', 'Clarification required — pipeline paused for human input', 'wn');
+}
+
+function submitClarifications() {
+  const tasks = Object.keys(pendingClarifications);
+  const clarifications = {};
+  tasks.forEach((key, i) => {
+    const owner = document.getElementById('cowner_'+i)?.value || pendingClarifications[key].owner;
+    const deadline = document.getElementById('cdeadline_'+i)?.value || pendingClarifications[key].deadline;
+    clarifications[key] = {owner, deadline};
+  });
+  window._clarifications = clarifications;
+  document.getElementById('clarifyOverlay').classList.remove('active');
+  addLog('SYSTEM', 'Clarifications submitted — pipeline resuming', 'ok');
+}
+
+// ── NOTION ──
+function renderNotionTasks(data) {
+  document.getElementById('mN').textContent = data.length;
+  if (!data.length) {
+    document.getElementById('notionBox').innerHTML = '<div class="empty">Notion not configured or no tasks created.</div>';
+    return;
+  }
+  let html = data.map(n => `<div class="titem">
+    <div class="town" style="color:var(--pink)">${n.owner}</div>
+    <div class="ttext">${n.task}</div>
+    <div class="tdl" style="color:var(--pink);opacity:0.7">Notion ID: ${n.notion_id ? n.notion_id.slice(0,8)+'...' : 'created'}</div>
+  </div>`).join('');
+  document.getElementById('notionBox').innerHTML = html;
+  addLog('NOTION', `Created ${data.length} task(s) in Notion`, 'ok');
+}
+
+// ── STALL CHECK ──
+async function checkStalls() {
+  const btn = document.getElementById('stallBtn');
+  btn.textContent = 'Checking...';
+  try {
+    const res = await fetch('/stalls');
+    const data = await res.json();
+    if (data.stalled_count === 0) {
+      addLog('STALL', 'No stalled tasks detected — all tasks have recent activity', 'ok');
+      alert('No stalled tasks. All open tasks have been updated recently.');
+    } else {
+      addLog('STALL', data.stalled_count + ' stalled task(s) detected — Slack alert sent', 'wn');
+      const names = data.stalled_tasks.slice(0,3).map(t => t.owner + ': ' + t.task.slice(0,30)).join('\n');
+      alert(`${data.stalled_count} stalled task(s) found (48h+ no update):\n\n${names}\n\nSlack alert sent to #meeting-intelligence.`);
+    }
+  } catch(e) {
+    addLog('STALL', 'Stall check failed: ' + e.message, 'er');
+  }
+  btn.textContent = 'Stall Check';
+}
+
 </script>
 </body>
 </html>
