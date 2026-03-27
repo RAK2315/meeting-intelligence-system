@@ -91,25 +91,25 @@ The system handles natural speech without structured labels — if someone says 
 ![Pipeline complete](images/3.png)
 
 ### Human-in-the-Loop Approval Gate — Review, edit, approve or reject each email
-![Approval gate](images/4.png)
+![Approval gate](images/2.png)
 
 ### Clarification Modal — Ambiguous tasks surfaced for human input
-![Clarification modal](images/7.png)
+![Clarification modal](images/13.png)
 
 ### Task Board — Persistent SQLite across meetings, Open / Overdue / Done
 ![Task board](images/6.png)
 
 ### Notion Database — One row per task, auto-created with full metadata
-![Notion tasks](images/8.png)
+![Notion tasks](images/11.png)
 
 ### Google Calendar — All-day deadline events with 24h email reminders
-![Calendar events](images/9.png)
+![Calendar events](images/12.png)
 
 ### Gmail — [OVERDUE] escalation emails + [DUE SOON] drafts + personalized follow-ups
 ![Gmail drafts](images/10.png)
-
+![Gmail drafts](images/8.png)
 ### Slack — Structured meeting report posted to #meeting-intelligence
-![Slack report](images/2.png)
+![Slack report](images/10.png)
 
 ---
 
